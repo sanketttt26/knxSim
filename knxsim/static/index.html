@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KNXSim</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #fff; --line: #e2e5e9; --text: #1d2129; --muted: #6b7380;
+    --accent: #0b6bcb; --on: #f2b100; --prog: #e5484d; --ok: #1f9d55; --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, "Segoe UI", Roboto, sans-serif; color: var(--text); background: var(--bg); }
+  header { display: flex; align-items: center; gap: 16px; padding: 10px 20px; background: #16202c; color: #e8edf3; }
+  header h1 { font-size: 17px; margin: 0; letter-spacing: .3px; }
+  header .meta { color: #9aa7b6; font-size: 13px; }
+  header .spacer { flex: 1; }
+  .pill { font-size: 12px; padding: 2px 8px; border-radius: 99px; background: #2a3646; }
+  .pill.on { background: #1d4d33; color: #8ee6b1; } .pill.off { background: #5a2525; color: #ffb4b4; }
+  button { font: inherit; white-space: nowrap; cursor: pointer; border: 1px solid var(--line); background: #fff; border-radius: 6px; padding: 5px 10px; }
+  button:hover { border-color: #b9c0c9; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--prog); }
+  nav { display: flex; gap: 4px; padding: 10px 20px 0; flex-wrap: wrap; border-bottom: 1px solid var(--line); background: #fff; }
+  nav button { border: 1px solid transparent; border-bottom: none; border-radius: 8px 8px 0 0; padding: 8px 14px; background: transparent; color: var(--muted); }
+  nav button.active { background: var(--bg); border-color: var(--line); color: var(--text); font-weight: 600; margin-bottom: -1px; }
+  nav .port { font-family: var(--mono); font-size: 12px; margin-left: 6px; color: var(--muted); }
+  nav .badge { display: inline-block; min-width: 18px; margin-left: 6px; padding: 0 5px; border-radius: 9px; background: var(--ok); color: #fff; font-size: 11px; }
+  main { padding: 16px 20px 30px; }
+  .info { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center; margin-bottom: 14px; }
+  .info b { font-family: var(--mono); font-weight: 600; }
+  .info .label { color: var(--muted); margin-right: 6px; }
+  .clients { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 440px; gap: 16px; align-items: start; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .card > .head { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  .card > .head .ia { font-family: var(--mono); font-size: 12px; background: #eef1f5; padding: 1px 6px; border-radius: 4px; }
+  .card > .head .name { flex: 1; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .prog { font-size: 11px; padding: 2px 8px; display: flex; align-items: center; gap: 5px; }
+  .prog i { width: 8px; height: 8px; border-radius: 50%; background: #cfd4da; }
+  .prog.active { border-color: var(--prog); color: var(--prog); } .prog.active i { background: var(--prog); box-shadow: 0 0 6px var(--prog); }
+  .ch { padding: 9px 12px; border-bottom: 1px solid #f0f2f4; }
+  .ch:last-child { border-bottom: none; }
+  .row { display: flex; align-items: center; gap: 10px; }
+  .row .title { flex: 1; min-width: 0; }
+  .title .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ga { font-family: var(--mono); font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .lamp { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #d3d8de; background: #eef0f3; flex: none; transition: background .15s, box-shadow .15s; }
+  .lamp.on { background: var(--on); border-color: #d99e00; box-shadow: 0 0 10px rgba(242,177,0,.75); }
+  .val { font-family: var(--mono); font-size: 13px; min-width: 52px; text-align: right; white-space: nowrap; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .ctrl { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .shade { width: 34px; height: 40px; border: 2px solid #9aa4b0; border-radius: 3px; background: #cfe6ff; position: relative; overflow: hidden; flex: none; }
+  .shade div { position: absolute; left: 0; right: 0; top: 0; background: repeating-linear-gradient(#7d8894 0 3px, #98a2ad 3px 5px); transition: height .1s linear; }
+  .bar { height: 6px; border-radius: 3px; background: #eceff2; overflow: hidden; flex: 1; }
+  .bar div { height: 100%; background: #e8590c; transition: width .2s; }
+  .push { min-width: 70px; } .push.on { background: #fff6da; border-color: var(--on); }
+  .monitor { position: sticky; top: 12px; }
+  .monitor .head { justify-content: space-between; }
+  .tablewrap { max-height: calc(100vh - 210px); overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: var(--mono); }
+  th { position: sticky; top: 0; background: #f7f8fa; text-align: left; font-weight: 600; color: var(--muted); padding: 5px 8px; border-bottom: 1px solid var(--line); }
+  td { padding: 4px 8px; border-bottom: 1px solid #f0f2f4; white-space: nowrap; }
+  tr.client td:first-child { box-shadow: inset 3px 0 var(--accent); }
+  td.svc { font-family: system-ui, sans-serif; }
+  .empty { color: var(--muted); padding: 40px; text-align: center; }
+  .error { position: fixed; bottom: 16px; right: 16px; background: #5a2525; color: #fff; padding: 10px 14px; border-radius: 8px; max-width: 420px; display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>KNXSim</h1>
+  <span class="meta" id="hostip"></span>
+  <span class="pill" id="disc"></span>
+  <span class="spacer"></span>
+  <button class="primary" id="add">+ Add instance</button>
+</header>
+<nav id="tabs"></nav>
+<main id="main"><div class="empty">Connecting…</div></main>
+<div class="error" id="err"></div>
+
+<script>
+"use strict";
+let state = null, current = Number(location.hash.slice(1)) || null, built = null, updaters = [], paused = false;
+const $ = (id) => document.getElementById(id);
+
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "class") el.className = v;
+    else el[k] = v;
+  }
+  for (const kid of kids.flat()) if (kid != null) el.append(kid instanceof Node ? kid : String(kid));
+  return el;
+}
+
+function showError(msg) {
+  const e = $("err"); e.textContent = msg; e.style.display = "block";
+  clearTimeout(showError.t); showError.t = setTimeout(() => (e.style.display = "none"), 5000);
+}
+
+async function api(method, path, body) {
+  const r = await fetch(path, { method, body: body === undefined ? undefined : JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) { showError(data.error || r.statusText); throw new Error(data.error); }
+  return data;
+}
+
+const act = (dev, ch, action, value) =>
+  api("POST", `/api/instances/${current}/action`, { device: dev, channel: ch, action, value }).catch(() => {});
+
+function gaText(ch) {
+  return Object.entries(ch.ga).map(([k, v]) => `${k} ${v.join(",")}`).join(" · ") || "no group address";
+}
+
+// ---- channel widgets: each returns [element, update(state)] ------------------
+const widgets = {
+  switch(d, c) {
+    const lamp = h("span", { class: "lamp" });
+    const btn = h("button", { onclick: () => act(d, c.index, "toggle") }, "Toggle");
+    return [h("div", { class: "row" }, lamp, title(c), btn), (s) => lamp.classList.toggle("on", s.on)];
+  },
+  dimmer(d, c) {
+    const lamp = h("span", { class: "lamp" }), val = h("span", { class: "val" });
+    const slider = h("input", { type: "range", min: 0, max: 100, step: 1,
+      onchange: () => act(d, c.index, "set", Number(slider.value)) });
+    const el = h("div", {}, h("div", { class: "row" }, lamp, title(c), val,
+      h("button", { onclick: () => act(d, c.index, "toggle") }, "On/Off")),
+      h("div", { class: "ctrl" }, slider));
+    return [el, (s) => {
+      lamp.classList.toggle("on", s.level > 0); lamp.style.opacity = s.level > 0 ? 0.35 + s.level / 154 : 1;
+      val.textContent = `${Math.round(s.level)} %`;
+      if (document.activeElement !== slider) slider.value = s.level;
+    }];
+  },
+  blind(d, c) {
+    const fill = h("div"), val = h("span", { class: "val" });
+    const el = h("div", { class: "row" }, h("div", { class: "shade" }, fill),
+      h("div", { class: "title" }, title(c), h("div", { class: "ctrl" },
+        h("button", { title: "Up", onclick: () => act(d, c.index, "up") }, "▲ Up"),
+        h("button", { title: "Stop / step", onclick: () => act(d, c.index, "stop") }, "■ Stop"),
+        h("button", { title: "Down", onclick: () => act(d, c.index, "down") }, "▼ Down"))), val);
+    return [el, (s) => {
+      fill.style.height = `${s.position}%`;
+      val.textContent = `${Math.round(s.position)} %${s.direction > 0 ? " ↓" : s.direction < 0 ? " ↑" : ""}`;
+    }];
+  },
+  button(d, c) {
+    const btn = h("button", { class: "push", onclick: () => act(d, c.index, "press") });
+    return [h("div", { class: "row" }, title(c), btn), (s) => {
+      btn.classList.toggle("on", s.on);
+      btn.textContent = s.mode === "toggle" ? (s.on ? "● Press" : "○ Press") : `Press (${s.mode})`;
+    }];
+  },
+  sensor(d, c) {
+    const s0 = c.state, val = h("span", { class: "val" });
+    if (s0.binary) {
+      const btn = h("button", {});
+      btn.onclick = () => act(d, c.index, "set", btn.dataset.v !== "true");
+      return [h("div", { class: "row" }, title(c), val, btn), (s) => {
+        btn.dataset.v = s.value; btn.textContent = s.value ? "Set off" : "Set on";
+        val.textContent = s.value ? "ON" : "OFF";
+      }];
+    }
+    const [min, max, step] = s0.range;
+    const slider = h("input", { type: "range", min, max, step,
+      oninput: () => (val.textContent = `${slider.value} ${s0.unit}`),
+      onchange: () => act(d, c.index, "set", Number(slider.value)) });
+    return [h("div", {}, h("div", { class: "row" }, title(c), val), h("div", { class: "ctrl" }, slider)), (s) => {
+      if (document.activeElement !== slider) { slider.value = s.value; val.textContent = `${s.value} ${s.unit}`; }
+    }];
+  },
+  thermostat(d, c) {
+    const tv = h("span", { class: "val" }), sv = h("span", { class: "val" }), hv = h("span", { class: "val" });
+    const fill = h("div");
+    const mk = (action, label, min, max, out) => {
+      const sl = h("input", { type: "range", min, max, step: 0.5,
+        oninput: () => (out.textContent = `${sl.value} °C`), onchange: () => act(d, c.index, action, Number(sl.value)) });
+      return [sl, h("div", { class: "ctrl" }, h("span", { style: "width:70px;color:var(--muted)" }, label), sl, out)];
+    };
+    const [ts, trow] = mk("temperature", "Measured", 10, 30, tv), [ss, srow] = mk("setpoint", "Setpoint", 15, 28, sv);
+    const el = h("div", {}, title(c), trow, srow,
+      h("div", { class: "ctrl" }, h("span", { style: "width:70px;color:var(--muted)" }, "Heating"), h("div", { class: "bar" }, fill), hv));
+    return [el, (s) => {
+      if (document.activeElement !== ts) { ts.value = s.temperature; tv.textContent = `${s.temperature} °C`; }
+      if (document.activeElement !== ss) { ss.value = s.setpoint; sv.textContent = `${s.setpoint} °C`; }
+      fill.style.width = `${s.heating}%`; hv.textContent = `${s.heating} %`;
+    }];
+  },
+};
+
+function title(c) {
+  return h("div", { class: "title" }, h("div", { class: "n" }, c.name), h("div", { class: "ga", title: gaText(c) }, gaText(c)));
+}
+
+// ---- rendering --------------------------------------------------------------
+function renderTabs() {
+  $("hostip").textContent = `IP ${state.ip}`;
+  const d = $("disc");
+  d.textContent = state.discovery ? "discovery on UDP 3671" : "discovery OFF (3671 busy?)";
+  d.className = "pill " + (state.discovery ? "on" : "off");
+  $("tabs").replaceChildren(...state.instances.map((i) => h("button", {
+    class: i.id === current ? "active" : "", onclick: () => select(i.id) },
+    i.name, h("span", { class: "port" }, `:${i.port}`),
+    i.connections.length ? h("span", { class: "badge", title: "connected clients" }, i.connections.length) : null)));
+}
+
+function select(id) {
+  current = id; location.hash = id; built = null; render();
+}
+
+function signature(inst) {
+  return JSON.stringify([inst.id, inst.devices.map((d) => [d.name, d.channels.map((c) => [c.kind, c.name, c.ga])])]);
+}
+
+function buildInstance(inst) {
+  updaters = [];
+  const conns = h("span", { class: "clients" }), tunnels = h("b"), devIa = [];
+  updaters.push((i) => {
+    const tun = i.connections.filter((c) => c.kind === "tunnel");
+    tunnels.textContent = `${tun.length}/${i.tunnel_ias.length}`;
+    conns.textContent = i.connections.map((c) => `${c.ia || "mgmt"} ← ${c.peer}`).join("   ");
+  });
+  const info = h("div", { class: "info" },
+    h("span", {}, h("span", { class: "label" }, "Endpoint"), h("b", {}, `${inst.ip}:${inst.port}`)),
+    h("span", {}, h("span", { class: "label" }, "Interface"), h("b", {}, inst.ia)),
+    h("span", {}, h("span", { class: "label" }, "Tunnels in use"), tunnels), conns,
+    h("span", { class: "spacer", style: "flex:1" }),
+    h("button", { class: "danger", onclick: async () => {
+      if (!confirm(`Remove instance "${inst.name}"?`)) return;
+      await api("DELETE", `/api/instances/${inst.id}`); current = null;
+    } }, "Remove instance"));
+
+  const cards = inst.devices.map((dev) => {
+    const ia = h("span", { class: "ia" }), prog = h("button", { class: "prog", title: "Programming mode",
+      onclick: () => act(dev.index, null, "prog", null) }, h("i"), "PROG");
+    updaters.push((i) => {
+      const d = i.devices[dev.index]; ia.textContent = d.ia; prog.classList.toggle("active", d.prog_mode);
+    });
+    const chans = dev.channels.map((c) => {
+      const make = widgets[c.kind];
+      if (!make) return h("div", { class: "ch" }, c.name);
+      const [el, update] = make(dev.index, c);
+      updaters.push((i) => update(i.devices[dev.index].channels[c.index].state));
+      return h("div", { class: "ch" }, el);
+    });
+    return h("div", { class: "card" }, h("div", { class: "head" }, ia, h("span", { class: "name", title: dev.name }, dev.name), prog), chans);
+  });
+
+  const count = h("span", { class: "ga" });
+  const pause = h("button", { onclick: () => { paused = !paused; pause.textContent = paused ? "Resume" : "Pause"; } }, paused ? "Resume" : "Pause");
+  const monitor = h("div", { class: "card monitor" },
+    h("div", { class: "head" }, h("span", { class: "name" }, "Group monitor"), count,
+      pause, h("button", { onclick: () => { $("rows").replaceChildren(); count.textContent = ""; } }, "Clear")),
+    h("div", { class: "tablewrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ["Time", "Source", "Dest", "Service", "Value"].map((t) => h("th", {}, t)))),
+      h("tbody", { id: "rows" }))));
+  monitor.count = count;
+  $("main").replaceChildren(info, h("div", { class: "layout" }, h("div", { class: "grid" }, cards), monitor));
+  built = { sig: signature(inst), monitor };
+  api("GET", `/api/instances/${inst.id}/monitor`)
+    .then((rows) => { if (built?.monitor === monitor) rows.forEach(addRow); }).catch(() => {});
+}
+
+function render() {
+  if (!state) return;
+  if (!state.instances.some((i) => i.id === current)) current = state.instances[0]?.id ?? null;
+  renderTabs();
+  const inst = state.instances.find((i) => i.id === current);
+  if (!inst) { $("main").replaceChildren(h("div", { class: "empty" }, "No instances. Use “+ Add instance”.")); built = null; return; }
+  if (!built || built.sig !== signature(inst)) buildInstance(inst);
+  updaters.forEach((u) => u(inst));
+}
+
+function addRow(t) {
+  const rows = $("rows");
+  if (!rows) return;
+  const time = new Date(t.time * 1000).toLocaleTimeString([], { hour12: false }) + "." + String(Math.floor((t.time % 1) * 1000)).padStart(3, "0");
+  rows.prepend(h("tr", { class: t.origin, title: `raw TPDU: ${t.data}${t.dpt ? `  ·  DPT ${t.dpt}` : ""}` },
+    h("td", {}, time), h("td", {}, t.src), h("td", {}, t.dst), h("td", { class: "svc" }, t.service), h("td", {}, t.value ?? t.data)));
+  while (rows.children.length > 300) rows.lastChild.remove();
+  if (built) built.monitor.count.textContent = `${rows.children.length} telegrams`;
+}
+
+let refreshTimer = null;
+function refresh() {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(async () => {
+    refreshTimer = null;
+    try { state = await (await fetch("/api/state")).json(); render(); } catch { /* server restarting */ }
+  }, 60);
+}
+
+$("add").onclick = async () => {
+  const name = prompt("Name of the new installation:", `KNX Sim ${(state?.instances.length || 0) + 1}`);
+  if (name === null) return;
+  const { id } = await api("POST", "/api/instances", { name });
+  current = id; location.hash = id; built = null; refresh();
+};
+
+function connect() {
+  const es = new EventSource("/api/events");
+  es.onopen = refresh;
+  es.onmessage = (m) => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "telegram") { if (ev.instance === current && !paused) addRow(ev); }
+    else refresh();
+  };
+  es.onerror = () => { es.close(); setTimeout(connect, 1500); };
+}
+connect();
+refresh();
+</script>
+</body>
+</html>
