@@ -58,6 +58,7 @@ IA_READ = 0x100
 IA_RESPONSE = 0x140
 MEMORY_READ = 0x200
 MEMORY_RESPONSE = 0x240
+MEMORY_WRITE = 0x280
 DEVICE_DESCRIPTOR_READ = 0x300
 DEVICE_DESCRIPTOR_RESPONSE = 0x340
 RESTART = 0x380
@@ -65,6 +66,7 @@ AUTHORIZE_REQUEST = 0x3D1
 AUTHORIZE_RESPONSE = 0x3D2
 PROPERTY_READ = 0x3D5
 PROPERTY_RESPONSE = 0x3D6
+PROPERTY_WRITE = 0x3D7
 IA_SERIAL_READ = 0x3DC
 IA_SERIAL_RESPONSE = 0x3DD
 IA_SERIAL_WRITE = 0x3DE
@@ -201,12 +203,12 @@ def describe(f: LData) -> str:
                 GROUP_WRITE: "GroupValueWrite"}[a & 0x3C0]
     four_bit = {IA_WRITE: "IndividualAddressWrite", IA_READ: "IndividualAddressRead",
                 IA_RESPONSE: "IndividualAddressResponse", MEMORY_READ: "MemoryRead",
-                MEMORY_RESPONSE: "MemoryResponse", 0x280: "MemoryWrite",
+                MEMORY_RESPONSE: "MemoryResponse", MEMORY_WRITE: "MemoryWrite",
                 DEVICE_DESCRIPTOR_READ: "DeviceDescriptorRead",
                 DEVICE_DESCRIPTOR_RESPONSE: "DeviceDescriptorResponse", RESTART: "Restart"}
     ten_bit = {AUTHORIZE_REQUEST: "AuthorizeRequest", AUTHORIZE_RESPONSE: "AuthorizeResponse",
                PROPERTY_READ: "PropertyValueRead", PROPERTY_RESPONSE: "PropertyValueResponse",
-               0x3D7: "PropertyValueWrite", IA_SERIAL_READ: "IndividualAddressSerialNumberRead",
+               PROPERTY_WRITE: "PropertyValueWrite", IA_SERIAL_READ: "IndividualAddressSerialNumberRead",
                IA_SERIAL_RESPONSE: "IndividualAddressSerialNumberResponse",
                IA_SERIAL_WRITE: "IndividualAddressSerialNumberWrite"}
     if a & 0x3C0 == 0x3C0:

@@ -97,7 +97,7 @@ class Instance(asyncio.DatagramProtocol):
         port_bytes = struct.pack(">H", port)  # ports are unique per machine -> unique ids
         self.serial = b"\x00\x00KS" + port_bytes
         self.mac = b"\x02KS\x00" + port_bytes
-        self.devices = [Device(self, d, i, b"\x00\x00" + port_bytes + struct.pack(">H", i + 1))
+        self.devices = [Device(self, d, i, self._device_serial(d, i, port_bytes))
                         for i, d in enumerate(cfg.get("devices") or DEFAULT_DEVICES)]
         self.connections: dict[int, Connection] = {}
         self.monitor: deque[dict] = deque(maxlen=300)
@@ -112,6 +112,15 @@ class Instance(asyncio.DatagramProtocol):
             DEVICE_CONFIGURATION_REQUEST: self._request,
             TUNNELLING_ACK: self._ack, DEVICE_CONFIGURATION_ACK: self._ack,
         }
+
+    @staticmethod
+    def _device_serial(cfg: dict, index: int, port_bytes: bytes) -> bytes:
+        """Use the ETS serial number when the project has one, else a unique id."""
+        try:
+            serial = bytes.fromhex(str(cfg.get("serial", ""))) if cfg.get("serial") else b""
+        except ValueError:
+            serial = b""
+        return serial if len(serial) == 6 else b"\x00\x00" + port_bytes + struct.pack(">H", index + 1)
 
     # --- UDP plumbing ------------------------------------------------------
     def connection_made(self, transport):

@@ -11,10 +11,12 @@ Why many instances fit on one IP:
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import socket
 
 from .instance import Instance
+from .knxproj import load_project
 from .protocol import KNX_PORT, MULTICAST_GROUP, SEARCH_REQUEST, endpoint, parse_frame, parse_hpai
 
 log = logging.getLogger(__name__)
@@ -121,6 +123,9 @@ class Host:
 
     async def add_instance(self, cfg: dict | None = None) -> Instance:
         cfg = dict(cfg or {})
+        if cfg.get("project"):
+            project = load_project(cfg["project"])
+            cfg.setdefault("devices", copy.deepcopy(project["devices"]))
         if cfg.get("port"):
             ports = [int(cfg["port"])]
         else:

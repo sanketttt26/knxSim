@@ -191,6 +191,32 @@ const widgets = {
       fill.style.width = `${s.heating}%`; hv.textContent = `${s.heating} %`;
     }];
   },
+  object(d, c) {
+    const val = h("span", { class: "val" });
+    const dpt = (c.dpt && c.dpt.value) || "1.001";
+    const main = Number(String(dpt).split(".")[0]);
+    const flags = c.state.flags || "";
+    const writable = flags.includes("w") || flags.includes("t");
+    let current = c.state.value, control = null;
+    if (writable && main === 1) {
+      control = h("button", { onclick: () => act(d, c.index, "set", !current) }, "Toggle");
+    } else if (writable && main === 5) {
+      control = h("input", { type: "range", min: 0, max: 100, step: 1,
+        onchange: () => act(d, c.index, "set", Number(control.value)) });
+    } else if (writable && [2, 3, 5, 6, 7, 8, 9, 12, 13, 14, 17, 18, 20, 23].includes(main)) {
+      control = h("input", { type: "number", step: "any", style: "width:80px",
+        onchange: () => act(d, c.index, "set", Number(control.value)) });
+    } else if (writable) {  // other DPTs travel as raw hex bytes
+      control = h("input", { type: "text", placeholder: "hex", style: "width:80px",
+        onchange: () => act(d, c.index, "set", control.value) });
+    }
+    const row = h("div", { class: "row" }, title(c), val, control);
+    return [row, (s) => {
+      current = s.value;
+      val.textContent = typeof s.value === "boolean" ? (s.value ? "ON" : "OFF") : (s.value ?? "–");
+      if (control && control.tagName === "INPUT" && document.activeElement !== control) control.value = s.value ?? "";
+    }];
+  },
 };
 
 function title(c) {

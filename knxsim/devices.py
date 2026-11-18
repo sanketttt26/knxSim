@@ -18,14 +18,27 @@ from .protocol import (
     AUTHORIZE_REQUEST, AUTHORIZE_RESPONSE, DEVICE_DESCRIPTOR_READ, DEVICE_DESCRIPTOR_RESPONSE,
     GROUP_READ, GROUP_RESPONSE, GROUP_WRITE, IA_READ, IA_RESPONSE, IA_SERIAL_READ,
     IA_SERIAL_RESPONSE, IA_SERIAL_WRITE, IA_WRITE, L_DATA_IND, MEMORY_READ, MEMORY_RESPONSE,
-    PROPERTY_READ, PROPERTY_RESPONSE, RESTART, T_CONNECT, T_DISCONNECT, LData, apdu,
-    decode_group, ga_from_str, ga_to_str, group_apdu, ia_from_str, ia_to_str,
+    MEMORY_WRITE, PROPERTY_READ, PROPERTY_RESPONSE, PROPERTY_WRITE, RESTART, T_CONNECT,
+    T_DISCONNECT, LData, apdu, decode_group, ga_from_str, ga_to_str, group_apdu, ia_from_str,
+    ia_to_str,
 )
 
 log = logging.getLogger(__name__)
 
 MASK_VERSION = 0x07B0       # device descriptor type 0 reported to ETS (TP1 system B)
 TRANSPORT_TIMEOUT = 6.0     # seconds, KNX connection-oriented idle timeout
+
+# Synthetic manufacturer-data block. ETS reads it when it identifies a device,
+# and the whole 64 KiB array is the download target for A_MemoryWrite.
+MEMORY_SIZE = 0x10000
+DEVICE_INFO_ADDRESS = 0x0100
+APPLICATION_ADDRESS = 0x0110  # first byte of the "application" area
+
+# Load state values reported to ETS (property objects 0 and 5).
+LOAD_STATE_UNLOADED = 0
+LOAD_STATE_LOADED = 1
+LOAD_STATE_LOADING = 2
+LOAD_STATE_ERROR = 3
 
 
 def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
@@ -360,7 +373,50 @@ class Thermostat(Channel):
         return {"temperature": self.temperature, "setpoint": self.setpoint, "heating": self.heating}
 
 
-CHANNEL_TYPES = {cls.kind: cls for cls in (Switch, Dimmer, Blind, Button, Sensor, Thermostat)}
+class Object(Channel):
+    """Generic group object imported from an ETS project.
+
+    One channel per communication object. ``flags`` uses the KNX letters
+    r (read), w (write), u (update) and t (transmit): the object answers reads,
+    accepts writes and, when it can transmit, sends the value on a UI action.
+    """
+    kind = "object"
+
+    def object_spec(self, cfg):
+        return {"value": (cfg.get("dpt", "1.001"), cfg.get("flags", "rw"))}
+
+    def setup(self, cfg):
+        self.number = int(cfg.get("number", self.index))
+        self.dpt = self.objects["value"][0]
+        self.flags = self.objects["value"][1]
+        value = cfg.get("value")
+        if value is None:
+            value = False if self.dpt.split(".")[0] == "1" else 0
+        try:
+            self.value = dpt.decode(self.dpt, dpt.encode(self.dpt, value))
+        except ValueError:
+            self.value = None  # raw-hex DPT without a start value: answers reads once written
+
+    def write(self, key, value):
+        self.value = value
+        self.changed()
+
+    def read(self, key):
+        return self.value
+
+    def action(self, name, value):
+        if name != "set":
+            super().action(name, value)
+        self.value = dpt.decode(self.dpt, dpt.encode(self.dpt, value))
+        if "t" in self.flags:
+            self.send("value", self.value)
+        self.changed()
+
+    def state(self):
+        return {"value": self.value, "flags": self.flags, "number": self.number}
+
+
+CHANNEL_TYPES = {cls.kind: cls for cls in (Switch, Dimmer, Blind, Button, Sensor, Thermostat, Object)}
 
 
 class Device:
@@ -371,6 +427,14 @@ class Device:
         self.name = cfg.get("name") or f"Device {cfg['ia']}"
         self.serial = serial
         self.prog_mode = False
+        self.mask_version = int(cfg.get("mask_version", MASK_VERSION)) & 0xFFFF
+        self.manufacturer_id = int(cfg.get("manufacturer_id", 0)) & 0xFFFF
+        self.application_id = int(cfg.get("application_id", 0)) & 0xFFFF
+        self.application_version = int(cfg.get("application_version", 0)) & 0xFF
+        self.order_number = str(cfg.get("order_number", "KNXSIM"))
+        self.load_state = int(cfg.get("load_state", LOAD_STATE_LOADED))
+        self.properties: dict[tuple[int, int], bytes] = {}
+        self.memory = self._initial_memory(int(cfg.get("memory_size", MEMORY_SIZE)))
         self.channels = []
         for i, ch in enumerate(cfg.get("channels", [])):
             kind = ch.get("type")
@@ -381,6 +445,35 @@ class Device:
         self._peer: int | None = None
         self._rx = self._tx = 0
         self._timer: asyncio.TimerHandle | None = None
+
+    # --- download memory ---------------------------------------------------
+    def _initial_memory(self, size: int) -> bytearray:
+        """Manufacturer data at 0x0100, then the application download area."""
+        memory = bytearray(max(size, APPLICATION_ADDRESS))
+        base = DEVICE_INFO_ADDRESS
+        memory[base:base + 2] = struct.pack(">H", self.manufacturer_id)
+        memory[base + 2:base + 4] = struct.pack(">H", self.application_id)
+        memory[base + 4] = self.application_version
+        memory[base + 5] = 0
+        memory[base + 6:base + 8] = struct.pack(">H", self.mask_version)
+        order = self.order_number.encode("ascii", "replace")[:8]
+        memory[base + 8:base + 16] = order.ljust(8, b"\x20")
+        return memory
+
+    def memory_read(self, address: int, count: int) -> bytes:
+        if address < 0:
+            return b"\x00" * count
+        return bytes(self.memory[address:address + count]).ljust(count, b"\x00")
+
+    def memory_write(self, address: int, data: bytes) -> None:
+        if address < 0 or not data:
+            return
+        end = address + len(data)
+        if end > len(self.memory):
+            self.memory.extend(b"\x00" * (end - len(self.memory)))
+        self.memory[address:end] = data
+        if address >= APPLICATION_ADDRESS and self.load_state != LOAD_STATE_LOADING:
+            self.load_state = LOAD_STATE_LOADED  # memory-only (BCU1) downloads have no load events
 
     def send(self, dst: int, group: bool, tpdu: bytes) -> None:
         self.instance.transmit(LData(L_DATA_IND, self.ia, dst, group, tpdu), origin=self)
@@ -498,8 +591,12 @@ class Device:
         a, data = f.apci, f.tpdu[2:]
         reply = lambda payload: self._reply(f.src, connected, payload)  # noqa: E731
         if a & 0x3C0 == DEVICE_DESCRIPTOR_READ:
-            if a & 0x3F == 0:
-                reply(apdu(DEVICE_DESCRIPTOR_RESPONSE, struct.pack(">H", MASK_VERSION)))
+            descriptor = a & 0x3F
+            if descriptor == 0:  # mask version
+                reply(apdu(DEVICE_DESCRIPTOR_RESPONSE, struct.pack(">H", self.mask_version)))
+            elif descriptor == 2:  # application descriptor: application id + version
+                reply(apdu(DEVICE_DESCRIPTOR_RESPONSE | 2,
+                           struct.pack(">H", self.application_id) + bytes([self.application_version])))
             else:
                 reply(apdu(DEVICE_DESCRIPTOR_RESPONSE | 0x3F))  # unsupported descriptor type
         elif a & 0x3C0 == RESTART:
@@ -509,21 +606,57 @@ class Device:
             self._close()
             self.instance.changed()
         elif a & 0x3C0 == MEMORY_READ:
-            reply(apdu(MEMORY_RESPONSE, data[:2]))  # 0 bytes = memory not accessible
+            address = struct.unpack(">H", data[:2])[0] if len(data) >= 2 else 0
+            count = (a & 0x3F) + 1  # ETS encodes number of bytes minus one
+            reply(apdu(MEMORY_RESPONSE | (count - 1), self.memory_read(address, count)))
+        elif a & 0x3C0 == MEMORY_WRITE:
+            address = struct.unpack(">H", data[:2])[0] if len(data) >= 2 else 0
+            count = (a & 0x3F) + 1
+            self.memory_write(address, data[2:2 + count])
         elif a == AUTHORIZE_REQUEST:
             reply(apdu(AUTHORIZE_RESPONSE, b"\x00"))  # access level 0 (full)
         elif a == PROPERTY_READ and len(data) >= 4:
             reply(apdu(PROPERTY_RESPONSE, self._property(data)))
+        elif a == PROPERTY_WRITE and len(data) >= 4:
+            reply(apdu(PROPERTY_RESPONSE, self._property_write(data)))
+
+    def _property_values(self, oi: int) -> dict[int, bytes]:
+        if oi == 0:  # device object
+            values = {1: b"\x00\x00", 11: self.serial, 12: struct.pack(">H", self.manufacturer_id),
+                      54: bytes([int(self.prog_mode)]), 56: b"\x00\x0F",
+                      83: struct.pack(">H", self.mask_version)}
+        elif 1 <= oi <= 4:  # load state machines: address/association table, application, PEI
+            # ponytail: one load state shared by all four; split per object if ETS interleaves them
+            values = {1: struct.pack(">H", oi), 5: bytes([self.load_state])}
+            if oi == 3:  # PID_PROG_VERSION: manufacturer, application number, version
+                values[13] = struct.pack(">HHB", self.manufacturer_id, self.application_id,
+                                         self.application_version)
+        else:
+            values = {}
+        values.update({pid: v for (o, pid), v in self.properties.items() if o == oi})
+        return values
 
     def _property(self, req: bytes) -> bytes:
         oi, pid, noe, six = req[0], req[1], req[2] >> 4, (req[2] & 0xF) << 8 | req[3]
-        values = {1: b"\x00\x00", 11: self.serial, 12: self.serial[:2],
-                  54: bytes([int(self.prog_mode)]), 56: b"\x00\x0F",
-                  83: struct.pack(">H", MASK_VERSION)} if oi == 0 else {}
-        value = values.get(pid)
+        value = self._property_values(oi).get(pid)
         if value is None or noe != 1 or six > 1:
             return bytes([oi, pid, six >> 8 & 0xF, six & 0xFF])  # NoE = 0 -> negative response
-        return bytes(req[:4]) + (b"\x00\x01" if six == 0 else value)
+        return bytes(req[:4]) + (b"\x00\x01" if six == 0 else value)  # index 0 = element count
+
+    def _property_write(self, req: bytes) -> bytes:
+        oi, pid, noe, six = req[0], req[1], req[2] >> 4, (req[2] & 0xF) << 8 | req[3]
+        payload = bytes(req[4:])
+        if noe != 1 or six != 1 or not payload:
+            return bytes([oi, pid, six >> 8 & 0xF, six & 0xFF])
+        if pid == 5 and 1 <= oi <= 4:  # load event; 0 = no-op, 3 = segment control (no state change)
+            self.load_state = {1: LOAD_STATE_LOADING, 2: LOAD_STATE_LOADED,
+                               4: LOAD_STATE_UNLOADED}.get(payload[0], self.load_state)
+        elif oi == 0 and pid == 54:
+            self.prog_mode = bool(payload[0] & 1)
+        else:  # LdCtrlWriteProp and friends: keep the value so ETS can read it back
+            self.properties[(oi, pid)] = payload
+        self.instance.changed()
+        return bytes(req[:4]) + self._property_values(oi)[pid]
 
     # --- UI --------------------------------------------------------------
     def action(self, name: str, value) -> None:
@@ -540,4 +673,7 @@ class Device:
     def snapshot(self) -> dict:
         return {"index": self.index, "ia": ia_to_str(self.ia), "name": self.name,
                 "prog_mode": self.prog_mode, "serial": self.serial.hex(),
+                "manufacturer_id": self.manufacturer_id, "application_id": self.application_id,
+                "order_number": self.order_number, "mask_version": self.mask_version,
+                "load_state": self.load_state,
                 "channels": [ch.snapshot() for ch in self.channels]}
