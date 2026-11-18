@@ -59,6 +59,7 @@ cd KNXSim
 python -m knxsim                 # 1 installation
 python -m knxsim -n 4            # 4 independent installations
 python -m knxsim -c examples/training-room.json
+python -m knxsim -p MyProject.knxproj -n 3   # 3 installations from an ETS project
 ```
 
 Open the UI at http://localhost:8080. It has one tab per installation, with clickable
@@ -69,6 +70,7 @@ at runtime.
 |---|---|
 | `-n N` | N instances with the default installation |
 | `-c FILE` | load instances from a JSON file (see below) |
+| `-p FILE` | load the devices of an ETS project (`.knxproj`) into every instance |
 | `--ip IP` | IP to advertise / join multicast on (default: picked per client automatically) |
 | `--base-port P` | first instance port (default 3672) |
 | `--web-port P` / `--web-host H` | UI address (default `127.0.0.1:8080`; use `--web-host 0.0.0.0` to open it to the LAN) |
@@ -89,6 +91,35 @@ What works from ETS:
   ETS "Program individual address". ETS's address check, IA write, device-descriptor
   verify and restart all work.
 * Device info (device descriptor, serial number, manufacturer property)
+* Application download into devices imported from a `.knxproj` (see below)
+
+### ETS project import and device download
+
+`-p MyProject.knxproj` (or `"project": "MyProject.knxproj"` per instance) reads an ETS 4/5/6
+project (export it without a password) and its topology and builds the devices from it: individual addresses, names,
+group-object links, data point types, manufacturer/application identity, order
+numbers, mask version and ETS serial numbers. Every instance gets its **own copies**
+with independent state, so `-n 3` means three separate installations even though they
+came from the same project. (KV, by contrast, keeps one shared device set.)
+
+With imported devices ETS can perform a real **application download**:
+
+* `A_MemoryRead` / `A_MemoryWrite` against the device's 64 KiB memory image
+  (manufacturer data at `0x0100`, application data from `0x0110`)
+* manufacturer ID, application ID/version, order number, serial number, object type,
+  max APDU length and mask version properties
+* device descriptor type 0 (mask) and type 2 (application)
+* load-state machines on objects 1–4 (address table, association table, application,
+  PEI: unload / start loading / segment control / load completed); properties ETS
+  writes during a download read back. Imported devices start **unloaded**, so ETS
+  downloads them
+* authorize, restart and point-to-point transport with T_ACK
+
+Downloaded bytes are retained in memory (including read-back verification), but the
+simulator does not evaluate the application's parameters: group behaviour comes from
+the project's communication objects (their DPTs and links). The emulated memory map is
+the generic TP1 system-B one; devices with a different mask or a manufacturer-specific
+layout may still be rejected by ETS's own checks.
 
 ### Other software
 
@@ -113,6 +144,9 @@ gateway `192.168.0.107`, port `3673`, connection type *tunnelling (UDP)*.
 
 * An instance without `devices` gets the default installation
   (`knxsim/default_installation.json`, 7 devices). Copy that file to start your own.
+* An instance may use `"project": "MyProject.knxproj"` instead of `"devices"`; a
+  relative path is resolved against the config file's directory. Devices listed in
+  `devices` take precedence over the project.
 * `port` is optional (next free port from `--base-port`). `interface_ia` defaults to
   `1.1.250`. The `tunnels` addresses (default 4) follow it: `1.1.251`–`1.1.254`.
 * A group address value can be a list: the first address sends and answers reads,
@@ -126,15 +160,18 @@ gateway `192.168.0.107`, port `3673`, connection type *tunnelling (UDP)*.
 | `button` | `switch` (1.001, sends), `status` (1.001, listens) | `mode`: toggle / on / off |
 | `sensor` | `value` (any of 1.x, 5.x, 7.x, 9.x, 14.x) | `dpt`, `unit`, `value`, `min`, `max`, `step` |
 | `thermostat` | `temperature`, `setpoint` (9.001), `heating` (5.001 valve %) | `temperature`, `setpoint`, `gain` |
+| `object` | `value` (any DPT) | `dpt`, `flags` (r/w/u/t), `number`, `value` |
 
 Status objects send on change and answer `GroupValueRead`.
 
 ## Limitations
 
-* **No ETS application download.** ETS can download parameters/group links only into
-  devices that exist in its product catalogue (`.knxprod`). KV's devices come from
-  KNX Association's own catalogue entries. KNXSim's devices are configured through the
-  JSON file instead: give them the group addresses of your ETS project.
+* **ETS downloads are emulated, not simulated.** Devices imported from a `.knxproj`
+  accept the ETS download protocol (memory, properties, load state, restart) and keep
+  the downloaded bytes, but the application program is not executed: behaviour still
+  comes from the communication objects and their group-address links. Data Secure
+  downloads are not supported, and devices whose product data is not embedded in the
+  project fall back to inferred DPTs/`rw` flags.
 * Tunnelling v1 over UDP only (no TCP, KNX IP Secure, Data Secure or routing multicast).
 * Port 3671 is reserved for discovery, so instances live on 3672+. Clients that cannot
   set a port can't reach them; nearly all can (ETS, xknx, openHAB, Calimero ...).

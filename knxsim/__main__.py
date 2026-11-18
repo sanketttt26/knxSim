@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import copy
 import json
 import logging
 import sys
+from pathlib import Path
 
 from .host import Host
+from .knxproj import load_project
 from .protocol import KNX_PORT
 from .web import WebUI
 
@@ -17,6 +20,7 @@ def parse_args(argv=None):
     ap.add_argument("-n", "--instances", type=int, default=1,
                     help="number of instances with the default installation (default 1)")
     ap.add_argument("-c", "--config", help="JSON file with an 'instances' list (overrides -n)")
+    ap.add_argument("-p", "--project", help="ETS project (.knxproj) whose devices are loaded into every instance")
     ap.add_argument("--ip", help="IP address to advertise and to join multicast on (default: automatic)")
     ap.add_argument("--base-port", type=int, default=KNX_PORT + 1,
                     help=f"first UDP port for instances (default {KNX_PORT + 1}); {KNX_PORT} stays for discovery")
@@ -32,8 +36,23 @@ async def run(args) -> None:
     if args.config:
         with open(args.config, encoding="utf-8") as fh:
             configs = json.load(fh)["instances"]
+        base_dir = Path(args.config).resolve().parent
     else:
         configs = [{} for _ in range(args.instances)]
+        base_dir = Path.cwd()
+
+    project = load_project(args.project) if args.project else None
+    for cfg in configs:
+        source = cfg.get("project")
+        if source:
+            path = Path(source)
+            inherited = load_project(path if path.is_absolute() else base_dir / path)
+        elif project is not None:
+            inherited = project
+        else:
+            continue
+        cfg.setdefault("devices", copy.deepcopy(inherited["devices"]))
+
     host = Host(ip=args.ip, base_port=args.base_port)
     await host.start(discovery=not args.no_discovery)
     web = None
